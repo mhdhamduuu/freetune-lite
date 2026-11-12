@@ -10,8 +10,9 @@ final class EQEngine {
     private let reverb = AVAudioUnitReverb()
     private var file: AVAudioFile?
     private var stopped = true
+    private var endHandler: (() -> Void)?
 
-    private static let bandFrequencies: [Double] = [60, 230, 910, 3600, 14000]
+    private static let bandFrequencies: [Float] = [60, 230, 910, 3600, 14000]
 
     init() {
         engine.attach(player)
@@ -57,12 +58,13 @@ final class EQEngine {
             let f = try AVAudioFile(forReading: url)
             try engine.start()
             file = f
+            endHandler = onEnd
             stopped = false
             player.scheduleFile(f, at: nil) { [weak self] in
                 DispatchQueue.main.async {
                     guard let self, !self.stopped else { return }
-                    self.stop()
-                    onEnd()
+                    self.hardStop()
+                    self.endHandler?()
                 }
             }
             player.play()
@@ -86,25 +88,51 @@ final class EQEngine {
     }
 
     func stop() {
+        hardStop()
+        endHandler = nil
+    }
+
+    private func hardStop() {
         stopped = true
         player.stop()
         engine.stop()
         file = nil
     }
 
+    /// Seeking in a scheduled file = stop current schedule, schedule the
+    /// remaining segment from the new position, keep playing.
     func seek(to seconds: Double) {
-        guard let f = file else { return }
+        guard let f = file, !stopped else { return }
         let rate = f.processingFormat.sampleRate
         guard rate > 0 else { return }
-        let frame = AVAudioFramePosition(max(0, seconds * rate))
-        player.seek(to: frame)
+        let start = AVAudioFramePosition(max(0, min(seconds * rate, Double(f.length) - 1)))
+        let remaining = f.length - start
+        guard remaining > 0 else { return }
+
+        stopped = true          // invalidate any old completion handler
+        player.stop()           // old completion fires but is guarded
+        stopped = false
+
+        player.scheduleSegment(
+            f,
+            startingFrame: start,
+            frameCount: AVAudioFrameCount(remaining),
+            at: nil
+        ) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, !self.stopped else { return }
+                self.hardStop()
+                self.endHandler?()
+            }
+        }
+        player.play()
     }
 
     var elapsed: Double {
         guard let nodeTime = player.lastRenderTime,
               let playerTime = player.playerTime(forNodeTime: nodeTime),
               playerTime.sampleRate > 0 else { return 0 }
-        return playerTime.sampleTime / playerTime.sampleRate
+        return Double(playerTime.sampleTime) / playerTime.sampleRate
     }
 
     var totalDuration: Double {

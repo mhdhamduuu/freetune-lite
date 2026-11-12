@@ -121,6 +121,9 @@ final class PlayerManager: NSObject {
         currentTime = clamped
         if playingLocal {
             engine.seek(to: clamped)
+            if !isPlaying {
+                engine.pause()
+            }
         } else {
             avPlayer?.seek(
                 to: CMTime(seconds: clamped, preferredTimescale: 600),
