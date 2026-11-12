@@ -1,0 +1,43 @@
+name: Build FreeTune Lite IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build unsigned app (iPhone arm64)
+        run: |
+          xcodebuild \
+            -project FreeTuneLite.xcodeproj \
+            -target FreeTuneLite \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$(pwd)/build/Products" \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R "build/Products/Release-iphoneos/FreeTuneLite.app" build/Payload/
+          cd build
+          zip -qry FreeTuneLite-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeTuneLite-unsigned-ipa
+          path: build/FreeTuneLite-unsigned.ipa
